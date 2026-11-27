@@ -30,6 +30,14 @@ SARBlur helps you do that on your own PC — no uploads, no cloud, no subscripti
 SARBlur is free. If it saves you time or money, donations to support development will be
 welcome — details coming soon.
 
+## Licence
+
+SARBlur is open source under the [Apache License 2.0](LICENSE).
+Copyright 2026 AVC Technology Ltd.
+
+SARBlur is a tool to assist redaction; it is provided "as is", without warranty.
+You remain responsible for reviewing every export before releasing footage.
+
 ---
 
 Published by **AVC Technology Ltd**.
