@@ -6,7 +6,17 @@ When someone makes a Subject Access Request (SAR) under UK GDPR for CCTV footage
 footage usually has to be released with everyone *except the requester* obscured.
 SARBlur helps you do that on your own PC — no uploads, no cloud, no subscription.
 
-> **Status:** v1 in testing. Not ready for real SARs yet: test it on your own footage first.
+> **Status:** 1.0.0 beta. Test it on your own footage before using it for a real SAR, and always
+> watch the exported video through before releasing it.
+
+## Download
+
+Get the latest Windows build from the
+[Releases page](https://github.com/AVC-Technology-Ltd/SARBlur/releases). Extract the zip and run
+`SARBlur.exe`; nothing is installed. Windows 10 or 11, 64-bit.
+
+The beta is not yet code-signed, so Windows may say "Windows protected your PC". Click
+**More info → Run anyway**.
 
 ## Features (v1)
 
@@ -29,22 +39,30 @@ python -m venv .venv
 .venv\Scripts\python -m sarblur
 ```
 
-Run the tests with `.venv\Scripts\python -m pytest`.
+Run the tests with `.venv\Scripts\python -m pytest`. Check a build end to end with
+`python -m sarblur --self-test`.
+
+Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml) when a
+`v*` tag is pushed. It compiles a minimal LGPL FFmpeg from source, packages the app with
+PyInstaller, self-tests it, and creates a draft release.
 
 ## How it works
 
-1. **Open** the video (File > Open, or drag it onto the window).
-2. **Detect faces.** Every frame is checked and faces are linked into numbered boxes (tracks).
-3. **Review.** Mark the requester's boxes *Keep visible* (green). They may have several if they
-   leave the frame or turn away. Play the whole video with *Preview redaction* on. Drag on the
-   picture to add a box for anyone who was missed. Drag a box, or its corner, to correct it at
-   that frame. *Start here* and *End here* set how long a box lasts.
-   Your review saves automatically next to the video (`<video>.sarblur.json`).
-4. **Export.** This writes `<name>_redacted.mp4` and a redaction log. You must confirm you
-   reviewed the whole video. The audio track is removed.
+The four buttons down the right-hand side are the four steps:
+
+1. **Open video:** pick the footage, or drag it onto the window.
+2. **Detect faces:** every frame is checked and faces are linked into numbered boxes.
+3. **Keep visible:** click one of the requester's boxes on the video, then press this button so it
+   turns green. The requester may have several boxes if they leave the frame or turn away. Press
+   it again to redact a box again. Then play the whole video with *Preview redaction* on. If
+   anyone is visible, drag on the picture to add a box. Drag a box, or its corner, to correct it
+   at that frame. Your review saves automatically next to the video (`<video>.sarblur.json`).
+4. **Export:** writes `<name>_redacted.mp4` and a redaction log (`.txt` and `.json`) with SHA-256
+   hashes of the original and the redacted copy. You must confirm you reviewed the whole video.
+   The audio track is removed.
 
 Keyboard: `Space` play/pause, `←`/`→` one frame, `Shift+←`/`→` one second, `K` keep, `R` redact,
-`[`/`]` start/end here, `Del` delete box, `P` preview.
+`[`/`]` box starts/ends at this frame, `Del` delete box, `P` preview.
 
 ## Known limitations (v1)
 
@@ -59,7 +77,8 @@ Keyboard: `Space` play/pause, `←`/`→` one frame, `Shift+←`/`→` one secon
 - Number plate and screen/document redaction
 - Keeping audio with selective muting
 - Batch processing
-- Windows installer
+- Windows installer and code signing
+- Undo
 
 ## Support the project
 

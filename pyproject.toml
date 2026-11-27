@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sarblur"
-version = "1.0.0"
+version = "1.0.0b1"
 description = "Free, offline face redaction for CCTV Subject Access Requests"
 readme = "README.md"
 license = "Apache-2.0"
@@ -14,14 +14,14 @@ dependencies = [
     "PySide6-Essentials>=6.7",
     "opencv-python>=4.8",
     "numpy>=1.26",
-    "imageio-ffmpeg>=0.5",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+# imageio-ffmpeg supplies an FFmpeg when running from source; release builds ship their own.
+dev = ["pytest>=8", "imageio-ffmpeg>=0.5", "pyinstaller>=6.10"]
 
 [project.gui-scripts]
-sarblur = "sarblur.ui:main"
+sarblur = "sarblur.__main__:entry"
 
 [tool.setuptools]
 packages = ["sarblur"]

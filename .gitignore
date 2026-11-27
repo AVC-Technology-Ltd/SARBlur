@@ -246,3 +246,6 @@ installer/output/
 # SARBlur review files hold box positions for real footage - keep them out of git too
 *.sarblur.json
 *.sarblur.json.tmp
+
+# Release build spec is kept in git
+!packaging/sarblur.spec

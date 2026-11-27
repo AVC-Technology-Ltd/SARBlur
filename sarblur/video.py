@@ -1,9 +1,11 @@
 """Reading source video (OpenCV) and writing the redacted MP4 (FFmpeg, OpenCV fallback)."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -59,18 +61,72 @@ class FrameReader:
         self.cap.release()
 
 
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+
 def ffmpeg_exe() -> str | None:
-    try:
-        import imageio_ffmpeg
-        return imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
-        return shutil.which("ffmpeg")
+    """The FFmpeg to encode with.
+
+    Release builds ship a minimal LGPL FFmpeg in an `ffmpeg` folder beside the
+    program. From source, use SARBLUR_FFMPEG, then imageio-ffmpeg (dev only),
+    then FFmpeg on PATH.
+    """
+    exe_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+    bases = [Path(getattr(sys, "_MEIPASS", "")), Path(sys.executable).parent] if getattr(sys, "frozen", False) else []
+    for base in bases:
+        candidate = base / "ffmpeg" / exe_name
+        if candidate.exists():
+            return str(candidate)
+    if os.environ.get("SARBLUR_FFMPEG") and Path(os.environ["SARBLUR_FFMPEG"]).exists():
+        return os.environ["SARBLUR_FFMPEG"]
+    if not getattr(sys, "frozen", False):
+        try:
+            import imageio_ffmpeg
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            pass
+    return shutil.which("ffmpeg")
+
+
+_h264_ok: dict[str, bool] = {}
+
+
+def h264_available(exe: str) -> bool:
+    """Whether Windows' H.264 encoder (Media Foundation) works here.
+
+    It is missing on Windows 'N' editions without the Media Feature Pack, so
+    try a tiny encode once and remember the answer.
+    """
+    if exe not in _h264_ok:
+        ok = False
+        if sys.platform == "win32":
+            fd, tmp = tempfile.mkstemp(suffix=".mp4")
+            os.close(fd)
+            try:
+                frames = np.zeros((240, 320, 3), np.uint8).tobytes() * 3
+                r = subprocess.run([exe, "-y", "-hide_banner", "-loglevel", "error",
+                                    "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", "320x240", "-r", "25",
+                                    "-i", "-", "-c:v", "h264_mf", "-pix_fmt", "nv12", tmp],
+                                   input=frames, capture_output=True, timeout=30, creationflags=_NO_WINDOW)
+                ok = r.returncode == 0 and os.path.getsize(tmp) > 0
+            except Exception:
+                ok = False
+            finally:
+                Path(tmp).unlink(missing_ok=True)
+        _h264_ok[exe] = ok
+    return _h264_ok[exe]
+
+
+def h264_bitrate(width: int, height: int, fps: float) -> int:
+    """Around 4 Mbit/s for 1080p at 25 fps, scaled by pixel rate, within 1.5-12 Mbit/s."""
+    return int(min(12e6, max(1.5e6, width * height * fps * 0.08)))
 
 
 class VideoWriter:
-    """Writes BGR frames to an H.264 MP4 via FFmpeg (no audio track).
+    """Writes BGR frames to an MP4 via FFmpeg (no audio track).
 
-    Falls back to OpenCV's MPEG-4 Part 2 writer if FFmpeg is unavailable.
+    Uses H.264 from Windows' own encoder where available, otherwise MPEG-4
+    Part 2. Falls back to OpenCV's MPEG-4 writer if there is no FFmpeg.
     """
 
     def __init__(self, path: str, width: int, height: int, fps: float):
@@ -80,18 +136,23 @@ class VideoWriter:
         self._cv = None
         exe = ffmpeg_exe()
         if exe:
+            if h264_available(exe):
+                rate = h264_bitrate(width, height, fps)
+                codec = ["-c:v", "h264_mf", "-b:v", str(rate), "-pix_fmt", "nv12"]
+                self.encoder = f"FFmpeg + Windows H.264 encoder ({rate / 1e6:.1f} Mbit/s)"
+            else:
+                codec = ["-c:v", "mpeg4", "-q:v", "3", "-pix_fmt", "yuv420p"]
+                self.encoder = "FFmpeg MPEG-4 Part 2 (q 3)"
             cmd = [exe, "-y", "-hide_banner", "-loglevel", "error",
                    "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{width}x{height}", "-r", f"{fps:.6g}",
                    "-i", "-", "-an",
                    "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-                   "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+                   *codec,
                    "-movflags", "+faststart", "-map_metadata", "-1",
                    "-metadata", "comment=Redacted with SARBlur",
                    path]
-            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
-                                          creationflags=flags)
-            self.encoder = "FFmpeg libx264 (CRF 18)"
+                                          creationflags=_NO_WINDOW)
         else:
             self._cv = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
             if not self._cv.isOpened():

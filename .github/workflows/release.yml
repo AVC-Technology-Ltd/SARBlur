@@ -1,0 +1,179 @@
+name: Release
+
+# Builds the Windows release when a version tag (v*) is pushed, and creates a
+# DRAFT GitHub release. A maintainer checks the draft and publishes it.
+#
+# FFmpeg is compiled here from the official source tarball with nothing but
+# FFmpeg's own LGPL code: Windows' built-in H.264 encoder (Media Foundation)
+# plus FFmpeg's MPEG-4 encoder as a fallback. The exact source and build
+# configuration are attached to the release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FFMPEG_VERSION: "9.0.2"
+
+jobs:
+  ffmpeg:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make diffutils
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-pkgconf
+
+      - name: Download FFmpeg source
+        run: |
+          curl -fsSLO "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
+          curl -fsSLO "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz.asc"
+          sha256sum "ffmpeg-${FFMPEG_VERSION}.tar.xz" | tee ffmpeg-source.sha256
+          tar xf "ffmpeg-${FFMPEG_VERSION}.tar.xz"
+
+      - name: Configure and build minimal LGPL FFmpeg
+        run: |
+          cd "ffmpeg-${FFMPEG_VERSION}"
+          CONFIG="--disable-everything --disable-autodetect --disable-network --disable-doc
+            --disable-debug --disable-ffplay --disable-ffprobe
+            --enable-static --disable-shared --extra-ldflags=-static
+            --enable-mediafoundation
+            --enable-encoder=h264_mf,mpeg4
+            --enable-decoder=rawvideo --enable-demuxer=rawvideo --enable-parser=h264
+            --enable-muxer=mp4 --enable-protocol=file,pipe
+            --enable-filter=pad,scale,format,null,buffer,buffersink"
+          ./configure $CONFIG
+          make -j"$(nproc)"
+          ./ffmpeg -hide_banner -buildconf
+          ./ffmpeg -hide_banner -L | head -3
+          mkdir -p ../out
+          cp ffmpeg.exe ../out/
+          cp COPYING.LGPLv2.1 COPYING.LGPLv3 LICENSE.md ../out/
+          {
+            echo "FFmpeg ${FFMPEG_VERSION}, built by the SARBlur release workflow."
+            echo "Source: https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz (attached to this release)"
+            echo "SHA-256: $(cut -d' ' -f1 ../ffmpeg-source.sha256)"
+            echo "Licence: LGPL v2.1 or later (no GPL or non-free components enabled)."
+            echo "Toolchain: MSYS2 UCRT64 $(gcc --version | head -1)"
+            echo "configure flags:"
+            echo "  $(echo $CONFIG | tr -s ' \n' ' ')"
+          } > ../out/FFMPEG-BUILD.txt
+          cat ../out/FFMPEG-BUILD.txt
+
+      - name: Check the MPEG-4 fallback encoder works
+        run: |
+          head -c $((321*241*3*10)) /dev/zero > frames.raw
+          out/ffmpeg.exe -hide_banner -y -f rawvideo -pix_fmt bgr24 -s 321x241 -r 25 -i frames.raw \
+            -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -c:v mpeg4 -q:v 3 -pix_fmt yuv420p test_mpeg4.mp4
+          ls -la out test_mpeg4.mp4
+
+      # Windows Server runners may not have Media Foundation's H.264 encoder;
+      # H.264 is verified on a desktop Windows PC before the draft is published.
+      - name: Try the Windows H.264 encoder (informational)
+        continue-on-error: true
+        run: |
+          out/ffmpeg.exe -hide_banner -y -f rawvideo -pix_fmt bgr24 -s 321x241 -r 25 -i frames.raw \
+            -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -c:v h264_mf -b:v 1500000 -pix_fmt nv12 test_h264.mp4
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg
+          path: |
+            out/
+            ffmpeg-${{ env.FFMPEG_VERSION }}.tar.xz
+            ffmpeg-${{ env.FFMPEG_VERSION }}.tar.xz.asc
+
+  build:
+    needs: ffmpeg
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg
+          path: ffmpeg-artifact
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+          New-Item -ItemType Directory -Force build/ffmpeg | Out-Null
+          Copy-Item ffmpeg-artifact/out/ffmpeg.exe build/ffmpeg/
+
+      - name: Tests (using the FFmpeg that will ship)
+        env:
+          SARBLUR_FFMPEG: ${{ github.workspace }}\build\ffmpeg\ffmpeg.exe
+        run: python -m pytest -q
+
+      - name: Build app
+        run: python -m PyInstaller --noconfirm --clean --distpath dist --workpath build/pyi packaging/sarblur.spec
+
+      - name: Add licences and docs
+        run: |
+          $d = "dist/SARBlur"
+          Copy-Item LICENSE, NOTICE, README.md, THIRD_PARTY_NOTICES.md $d
+          New-Item -ItemType Directory -Force "$d/licenses" | Out-Null
+          Copy-Item ffmpeg-artifact/out/COPYING.LGPLv2.1, ffmpeg-artifact/out/COPYING.LGPLv3 "$d/licenses/"
+          Copy-Item ffmpeg-artifact/out/LICENSE.md "$d/licenses/FFmpeg-LICENSE.md"
+          Copy-Item ffmpeg-artifact/out/FFMPEG-BUILD.txt "$d/licenses/"
+          Copy-Item sarblur/models/LICENSE-YuNet.txt "$d/licenses/"
+          $cvinfo = python -c "import importlib.metadata as m; print(m.distribution('opencv-python')._path)"
+          Copy-Item "$cvinfo/LICENSE.txt" "$d/licenses/opencv-python-LICENSE.txt"
+          Copy-Item "$cvinfo/LICENSE-3RD-PARTY.txt" "$d/licenses/opencv-python-LICENSE-3RD-PARTY.txt"
+          $qt = python -c "import PySide6, os; print(os.path.dirname(PySide6.__file__))"
+          Get-ChildItem "$qt/../pyside6*.dist-info/*", "$qt/../PySide6_Essentials*.dist-info/*" -Include "LICENSE*" -ErrorAction SilentlyContinue |
+            ForEach-Object { Copy-Item $_ "$d/licenses/PySide6-$($_.Name)" }
+
+      - name: Self-test the packaged program
+        run: |
+          $p = Start-Process -FilePath dist/SARBlur/SARBlur.exe -ArgumentList "--self-test", "$PWD\selftest.txt" -Wait -PassThru
+          Get-Content selftest.txt
+          if ($p.ExitCode -ne 0) { throw "self-test failed" }
+
+      - name: Zip
+        id: zip
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if (-not $tag.StartsWith("v")) { $tag = "dev" }
+          $name = "SARBlur-$($tag.TrimStart('v'))-windows-x64.zip"
+          Compress-Archive -Path dist/SARBlur -DestinationPath $name
+          (Get-FileHash $name -Algorithm SHA256).Hash.ToLower() + "  $name" | Out-File -Encoding ascii "$name.sha256"
+          "name=$name" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SARBlur-windows
+          path: |
+            SARBlur-*.zip
+            SARBlur-*.zip.sha256
+
+      - name: Create draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $opts = @("--draft", "--title", "SARBlur $($tag.TrimStart('v'))", "--notes-file", "packaging/RELEASE_NOTES.md")
+          if ($tag -match "-") { $opts += "--prerelease" }
+          $files = @("${{ steps.zip.outputs.name }}", "${{ steps.zip.outputs.name }}.sha256",
+                     "ffmpeg-artifact/ffmpeg-${{ env.FFMPEG_VERSION }}.tar.xz",
+                     "ffmpeg-artifact/ffmpeg-${{ env.FFMPEG_VERSION }}.tar.xz.asc",
+                     "ffmpeg-artifact/out/FFMPEG-BUILD.txt")
+          gh release create $tag @opts @files
