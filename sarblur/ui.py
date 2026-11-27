@@ -8,13 +8,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, QSettings, QSize, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import (QAction, QBrush, QColor, QDesktopServices, QFont, QImage, QKeySequence,
+from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont, QImage, QKeySequence,
                            QPainter, QPen, QShortcut)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-                               QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel,
+                               QFileDialog, QFormLayout, QHBoxLayout, QLabel,
                                QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressDialog,
-                               QPushButton, QSizePolicy, QSlider, QSplitter, QStyle, QTreeWidget,
-                               QTreeWidgetItem, QVBoxLayout, QWidget)
+                               QPushButton, QSizePolicy, QSlider, QStyle,
+                               QVBoxLayout, QWidget)
 
 from sarblur import APP_NAME, PUBLISHER, __version__, redact
 from sarblur.analysis import Cancelled, analyse
@@ -416,14 +416,7 @@ class MainWindow(QMainWindow):
         lv.addWidget(self.slider)
         lv.addLayout(transport)
 
-        # track panel
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["#", "Found by", "From", "To", "Action"])
-        self.tree.setRootIsDecorated(False)
-        self.tree.setAlternatingRowColors(True)
-        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.tree.itemSelectionChanged.connect(self._tree_selection)
-        self.tree.itemDoubleClicked.connect(lambda *_: self._jump_to_track())
+        # side panel: stacked buttons acting on the box selected in the video
         self.keep_btn = self._btn("Keep visible (requester)  [K]", lambda: self._set_redact(False))
         self.blur_btn = self._btn("Redact  [R]", lambda: self._set_redact(True))
         self.start_btn = self._btn("Start here  [", self._set_start)
@@ -441,29 +434,31 @@ class MainWindow(QMainWindow):
         help_text.setWordWrap(True)
         help_text.setStyleSheet("color: #444; padding: 4px")
         side = QWidget()
+        side.setFixedWidth(270)
         sv = QVBoxLayout(side)
-        sv.setContentsMargins(0, 0, 0, 0)
+        sv.setContentsMargins(6, 0, 0, 0)
+        sv.setSpacing(6)
         self.count_label = QLabel("No video open")
+        self.count_label.setWordWrap(True)
+        self.selection_label = QLabel()
+        self.selection_label.setWordWrap(True)
+        self.selection_label.setMinimumHeight(44)
+        self.selection_label.setStyleSheet("background: #e6e9ee; border-radius: 4px; padding: 6px")
         sv.addWidget(self.count_label)
-        sv.addWidget(self.tree, 1)
-        grid = QHBoxLayout()
-        grid.addWidget(self.keep_btn)
-        grid.addWidget(self.blur_btn)
-        sv.addLayout(grid)
-        grid2 = QHBoxLayout()
-        for b in (self.start_btn, self.end_btn, self.jump_btn):
-            grid2.addWidget(b)
-        sv.addLayout(grid2)
-        sv.addWidget(self.del_btn)
+        sv.addWidget(self.selection_label)
+        for b in (self.keep_btn, self.blur_btn, self.start_btn, self.end_btn, self.jump_btn, self.del_btn):
+            b.setMinimumHeight(32)
+            sv.addWidget(b)
+        sv.addSpacing(8)
         sv.addWidget(help_text)
+        sv.addStretch(1)
 
-        split = QSplitter()
-        split.addWidget(left)
-        split.addWidget(side)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 1)
-        split.setSizes([900, 380])
-        self.setCentralWidget(split)
+        central = QWidget()
+        ch = QHBoxLayout(central)
+        ch.setContentsMargins(0, 0, 6, 0)
+        ch.addWidget(left, 1)
+        ch.addWidget(side)
+        self.setCentralWidget(central)
 
         self._build_menus()
         self.play_timer = QTimer(self)
@@ -610,7 +605,7 @@ class MainWindow(QMainWindow):
         self.slider.blockSignals(True)
         self.slider.setRange(0, max(0, project.frame_count - 1))
         self.slider.blockSignals(False)
-        self._refresh_tree()
+        self._refresh_panel()
         self.timeline.invalidate()
         self.seek(0)
         self._update_enabled()
@@ -686,32 +681,27 @@ class MainWindow(QMainWindow):
             return None
         return self.project.track(self.view.selected_id)
 
-    def _refresh_tree(self):
-        self.tree.blockSignals(True)
-        self.tree.clear()
+    def _refresh_panel(self):
         p = self.project
-        sel_item = None
-        for t in p.tracks:
-            item = QTreeWidgetItem([str(t.id), "Detector" if t.kind == "auto" else "You",
-                                    timecode(t.start, p.fps)[:-4], timecode(t.end, p.fps)[:-4],
-                                    "Redact" if t.redact else "KEEP (requester)"])
-            item.setData(0, Qt.ItemDataRole.UserRole, t.id)
-            item.setForeground(4, QBrush(RED if t.redact else GREEN))
-            self.tree.addTopLevelItem(item)
-            if t.id == self.view.selected_id:
-                sel_item = item
-        if sel_item:
-            sel_item.setSelected(True)
-            self.tree.scrollToItem(sel_item)
-        self.tree.blockSignals(False)
         kept = sum(1 for t in p.tracks if not t.redact)
-        status = "" if p.analysed else "  (detection not run yet)"
-        self.count_label.setText(f"{len(p.tracks)} boxes: {len(p.tracks) - kept} redacted, {kept} kept visible{status}")
+        status = "" if p.analysed else "\n(face detection not run yet)"
+        self.count_label.setText(f"{len(p.tracks)} boxes: {len(p.tracks) - kept} redacted, "
+                                 f"{kept} kept visible{status}")
+        t = self._selected()
+        if t:
+            colour = "#c62832" if t.redact else "#1e8a4c"
+            action = "Redacted" if t.redact else "Kept visible (requester)"
+            found = "found by detector" if t.kind == "auto" else "added by you"
+            self.selection_label.setText(
+                f"<b>Box #{t.id}</b> - <span style='color:{colour}'><b>{action}</b></span><br>"
+                f"{timecode(t.start, p.fps)[:-4]} to {timecode(t.end, p.fps)[:-4]}, {found}")
+        else:
+            self.selection_label.setText("Click a box on the video to select it.")
         self.timeline.invalidate()
 
-    def _changed(self, refresh_tree=True):
-        if refresh_tree:
-            self._refresh_tree()
+    def _changed(self, refresh_panel=True):
+        if refresh_panel:
+            self._refresh_panel()
         self.timeline.invalidate()
         self._render()
         self._update_enabled()
@@ -719,25 +709,8 @@ class MainWindow(QMainWindow):
 
     def _select_track(self, track_id: int):
         self.view.selected_id = self.timeline.selected_id = track_id
-        self.tree.blockSignals(True)
-        self.tree.clearSelection()
-        for i in range(self.tree.topLevelItemCount()):
-            it = self.tree.topLevelItem(i)
-            if it.data(0, Qt.ItemDataRole.UserRole) == track_id:
-                it.setSelected(True)
-                self.tree.scrollToItem(it)
-        self.tree.blockSignals(False)
-        self.view.update()
-        self.timeline.update()
-        self._update_enabled()
-
-    def _tree_selection(self):
-        items = self.tree.selectedItems()
-        tid = items[0].data(0, Qt.ItemDataRole.UserRole) if items else -1
-        self.view.selected_id = self.timeline.selected_id = tid
-        t = self._selected()
-        if t and not (t.start <= self.frame <= t.end):
-            self.seek(min(t.keyframes))
+        if self.project:
+            self._refresh_panel()
         self.view.update()
         self.timeline.update()
         self._update_enabled()
@@ -790,7 +763,7 @@ class MainWindow(QMainWindow):
         t = self.project.track(track_id)
         if t:
             t.set_box(self.frame, unpad_rect(*rect, self.project.padding))
-            self._changed(refresh_tree=False)
+            self._changed(refresh_panel=False)
 
     # -- analysis ---------------------------------------------------------------------
     def analyse_dialog(self):
