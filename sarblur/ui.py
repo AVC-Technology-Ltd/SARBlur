@@ -7,13 +7,13 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, QSettings, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import QPointF, QRectF, QSettings, QSize, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import (QAction, QBrush, QColor, QDesktopServices, QFont, QImage, QKeySequence,
                            QPainter, QPen, QShortcut)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel,
                                QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressDialog,
-                               QPushButton, QSizePolicy, QSlider, QSplitter, QTreeWidget,
+                               QPushButton, QSizePolicy, QSlider, QSplitter, QStyle, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from sarblur import APP_NAME, PUBLISHER, __version__, redact
@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
             "Drag a box to move it, or its corner to resize - that fixes it at this frame.<br>"
             "4. Use <b>Start here / End here</b> to set how long a box lasts.")
         help_text.setWordWrap(True)
-        help_text.setStyleSheet("color: #bbb; padding: 4px")
+        help_text.setStyleSheet("color: #444; padding: 4px")
         side = QWidget()
         sv = QVBoxLayout(side)
         sv.setContentsMargins(0, 0, 0, 0)
@@ -500,9 +500,37 @@ class MainWindow(QMainWindow):
         h.addAction(QAction("&About SARBlur", self, triggered=self.about))
         tb = self.addToolBar("Main")
         tb.setMovable(False)
-        tb.addAction(self.open_act)
-        tb.addAction(self.analyse_act)
-        tb.addAction(self.export_act)
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        tb.setIconSize(QSize(20, 20))
+        tb.setStyleSheet("""
+            QToolBar { spacing: 8px; padding: 6px; border: none; }
+            QToolButton {
+                font-size: 14px; font-weight: bold; color: white;
+                background: #3a5f8f; border: 1px solid #2c4a70; border-radius: 6px;
+                padding: 7px 16px;
+            }
+            QToolButton:hover { background: #4a74ab; }
+            QToolButton:pressed { background: #2c4a70; }
+            QToolButton:disabled { background: #9aa3ad; border-color: #8a929b; color: #e8e8e8; }
+            QToolButton#export { background: #2e8b57; border-color: #236b43; }
+            QToolButton#export:hover { background: #38a869; }
+            QToolButton#export:pressed { background: #236b43; }
+            QToolButton#export:disabled { background: #9aa3ad; border-color: #8a929b; }
+        """)
+        style = self.style()
+        icons = {self.open_act: QStyle.StandardPixmap.SP_DialogOpenButton,
+                 self.analyse_act: QStyle.StandardPixmap.SP_FileDialogContentsView,
+                 self.export_act: QStyle.StandardPixmap.SP_DialogSaveButton}
+        labels = {self.open_act: "1. Open video", self.analyse_act: "2. Detect faces",
+                  self.export_act: "3. Export redacted video"}
+        for act in (self.open_act, self.analyse_act, self.export_act):
+            act.setIcon(style.standardIcon(icons[act]))
+            act.setIconText(labels[act])  # toolbar label; menus keep the action's own text
+            tb.addAction(act)
+            btn = tb.widgetForAction(act)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(f"{act.text().replace('&', '').rstrip('.')} ({act.shortcut().toString()})")
+        tb.widgetForAction(self.export_act).setObjectName("export")
 
     def _shortcuts(self):
         keys = {
