@@ -459,8 +459,9 @@ class MainWindow(QMainWindow):
         sv = QVBoxLayout(side)
         sv.setContentsMargins(6, 6, 0, 0)
         sv.setSpacing(8)
-        self.count_label = QLabel("No video open")
+        self.count_label = QLabel()
         self.count_label.setWordWrap(True)
+        self.count_label.hide()  # shown once a video is open
         self.selection_label = QLabel()
         self.selection_label.setWordWrap(True)
         self.selection_label.setMinimumHeight(44)
@@ -690,6 +691,7 @@ class MainWindow(QMainWindow):
     def _refresh_panel(self):
         p = self.project
         self.selection_label.show()
+        self.count_label.show()
         kept = sum(1 for t in p.tracks if not t.redact)
         status = "" if p.analysed else "\n(face detection not run yet)"
         self.count_label.setText(f"{len(p.tracks)} boxes: {len(p.tracks) - kept} redacted, "
