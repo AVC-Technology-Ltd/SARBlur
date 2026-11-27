@@ -221,3 +221,24 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- SARBlur: NEVER commit CCTV footage or redaction outputs ----
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.wmv
+*.m4v
+*.ts
+*.h264
+*.h265
+*.dav
+*.264
+footage/
+output/
+samples/private/
+*.redaction-log.*
+
+# Packaging
+*.spec.bak
+installer/output/
