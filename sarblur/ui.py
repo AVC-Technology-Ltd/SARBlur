@@ -124,7 +124,7 @@ class VideoView(QWidget):
         if not self.image:
             p.setPen(QColor(150, 150, 160))
             p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                       "Open a CCTV video to begin  (File > Open video, or drag a file here)")
+                       "Press  1. Open video  to begin, or drag a video file here")
             return
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         p.drawImage(self._target(), self.image)
@@ -416,39 +416,64 @@ class MainWindow(QMainWindow):
         lv.addWidget(self.slider)
         lv.addLayout(transport)
 
-        # side panel: stacked buttons acting on the box selected in the video
-        self.keep_btn = self._btn("Keep visible (requester)  [K]", lambda: self._set_redact(False))
-        self.blur_btn = self._btn("Redact  [R]", lambda: self._set_redact(True))
-        self.start_btn = self._btn("Start here  [", self._set_start)
-        self.end_btn = self._btn("End here  ]", self._set_end)
-        self.del_btn = self._btn("Delete box  [Del]", self._delete_track)
-        self.jump_btn = self._btn("Go to start", self._jump_to_track)
+        self._build_menus()
+
+        # side panel: the four numbered steps, top to bottom
+        self.open_btn = self._step_btn("1. Open video", QStyle.StandardPixmap.SP_DialogOpenButton,
+                                       self.open_dialog, "Open a CCTV video (Ctrl+O)")
+        self.detect_btn = self._step_btn("2. Detect faces", QStyle.StandardPixmap.SP_FileDialogContentsView,
+                                         self.analyse_dialog, "Find faces in every frame (Ctrl+D)")
+        self.keep_btn = self._step_btn("3. Keep visible", QStyle.StandardPixmap.SP_DialogApplyButton,
+                                       None, "Leave the selected box visible - use for the requester (K)")
+        self.keep_btn.setCheckable(True)
+        self.keep_btn.toggled.connect(lambda on: self._set_redact(not on))
+        self.export_btn = self._step_btn("4. Export", QStyle.StandardPixmap.SP_DialogSaveButton,
+                                         self.export_dialog, "Save the redacted video and log (Ctrl+E)")
+        self.export_btn.setObjectName("export")
         help_text = QLabel(
             "<b>How to review</b><br>"
-            "1. Find the requester and mark each of their boxes <b>Keep visible</b> (green). "
-            "They may have several boxes if they leave the frame or turn away.<br>"
-            "2. Play through the whole video with <b>Preview redaction</b> on.<br>"
-            "3. If anyone is visible, <b>drag on the video</b> to add a box. "
-            "Drag a box to move it, or its corner to resize - that fixes it at this frame.<br>"
-            "4. Use <b>Start here / End here</b> to set how long a box lasts.")
+            "Click a box on the video to select it. Press <b>3. Keep visible</b> on each of the "
+            "requester's boxes (they turn green); press it again to redact the box again.<br><br>"
+            "Play the whole video with <b>Preview redaction</b> on. If anyone is visible, "
+            "<b>drag on the video</b> to add a box. Drag a box to move it, or its corner to resize.<br><br>"
+            "<b>Keys:</b> Space play, ← → frame, [ ] box start/end here, Del delete box, "
+            "P preview.")
         help_text.setWordWrap(True)
         help_text.setStyleSheet("color: #444; padding: 4px")
         side = QWidget()
         side.setFixedWidth(270)
+        side.setStyleSheet("""
+            QPushButton[step="true"] {
+                font-size: 15px; font-weight: bold; color: white; text-align: left;
+                background: #3a5f8f; border: 1px solid #2c4a70; border-radius: 6px;
+                padding: 10px 14px;
+            }
+            QPushButton[step="true"]:hover { background: #4a74ab; }
+            QPushButton[step="true"]:pressed { background: #2c4a70; }
+            QPushButton[step="true"]:checked { background: #2e9e5b; border-color: #23784a; }
+            QPushButton[step="true"]:disabled { background: #b4bac2; border-color: #a2a9b1; color: #eef0f2; }
+            QPushButton#export { background: #2e8b57; border-color: #236b43; }
+            QPushButton#export:hover { background: #38a869; }
+            QPushButton#export:disabled { background: #b4bac2; border-color: #a2a9b1; }
+        """)
         sv = QVBoxLayout(side)
-        sv.setContentsMargins(6, 0, 0, 0)
-        sv.setSpacing(6)
+        sv.setContentsMargins(6, 6, 0, 0)
+        sv.setSpacing(8)
         self.count_label = QLabel("No video open")
         self.count_label.setWordWrap(True)
         self.selection_label = QLabel()
         self.selection_label.setWordWrap(True)
         self.selection_label.setMinimumHeight(44)
         self.selection_label.setStyleSheet("background: #e6e9ee; border-radius: 4px; padding: 6px")
+        self.selection_label.hide()  # shown once a video is open
+        sv.addWidget(self.open_btn)
+        sv.addWidget(self.detect_btn)
+        sv.addSpacing(6)
         sv.addWidget(self.count_label)
         sv.addWidget(self.selection_label)
-        for b in (self.keep_btn, self.blur_btn, self.start_btn, self.end_btn, self.jump_btn, self.del_btn):
-            b.setMinimumHeight(32)
-            sv.addWidget(b)
+        sv.addWidget(self.keep_btn)
+        sv.addSpacing(6)
+        sv.addWidget(self.export_btn)
         sv.addSpacing(8)
         sv.addWidget(help_text)
         sv.addStretch(1)
@@ -460,7 +485,6 @@ class MainWindow(QMainWindow):
         ch.addWidget(side)
         self.setCentralWidget(central)
 
-        self._build_menus()
         self.play_timer = QTimer(self)
         self.play_timer.timeout.connect(self._tick)
         self.autosave = QTimer(self)
@@ -472,6 +496,17 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Everything runs on this PC. Footage is never uploaded.")
 
     # -- construction helpers ------------------------------------------------------
+    def _step_btn(self, text, icon, slot, tip):
+        b = QPushButton(self.style().standardIcon(icon), "  " + text)
+        b.setProperty("step", True)
+        b.setIconSize(QSize(20, 20))
+        b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setToolTip(tip)
+        if slot:
+            b.clicked.connect(slot)
+        return b
+
     def _btn(self, text, slot):
         b = QPushButton(text)
         b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -493,39 +528,6 @@ class MainWindow(QMainWindow):
         v.addAction(self.analyse_act)
         h = self.menuBar().addMenu("&Help")
         h.addAction(QAction("&About SARBlur", self, triggered=self.about))
-        tb = self.addToolBar("Main")
-        tb.setMovable(False)
-        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        tb.setIconSize(QSize(20, 20))
-        tb.setStyleSheet("""
-            QToolBar { spacing: 8px; padding: 6px; border: none; }
-            QToolButton {
-                font-size: 14px; font-weight: bold; color: white;
-                background: #3a5f8f; border: 1px solid #2c4a70; border-radius: 6px;
-                padding: 7px 16px;
-            }
-            QToolButton:hover { background: #4a74ab; }
-            QToolButton:pressed { background: #2c4a70; }
-            QToolButton:disabled { background: #9aa3ad; border-color: #8a929b; color: #e8e8e8; }
-            QToolButton#export { background: #2e8b57; border-color: #236b43; }
-            QToolButton#export:hover { background: #38a869; }
-            QToolButton#export:pressed { background: #236b43; }
-            QToolButton#export:disabled { background: #9aa3ad; border-color: #8a929b; }
-        """)
-        style = self.style()
-        icons = {self.open_act: QStyle.StandardPixmap.SP_DialogOpenButton,
-                 self.analyse_act: QStyle.StandardPixmap.SP_FileDialogContentsView,
-                 self.export_act: QStyle.StandardPixmap.SP_DialogSaveButton}
-        labels = {self.open_act: "1. Open video", self.analyse_act: "2. Detect faces",
-                  self.export_act: "3. Export redacted video"}
-        for act in (self.open_act, self.analyse_act, self.export_act):
-            act.setIcon(style.standardIcon(icons[act]))
-            act.setIconText(labels[act])  # toolbar label; menus keep the action's own text
-            tb.addAction(act)
-            btn = tb.widgetForAction(act)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(f"{act.text().replace('&', '').rstrip('.')} ({act.shortcut().toString()})")
-        tb.widgetForAction(self.export_act).setObjectName("export")
 
     def _shortcuts(self):
         keys = {
@@ -546,9 +548,13 @@ class MainWindow(QMainWindow):
         has = self.project is not None
         for a in (self.save_act, self.export_act, self.analyse_act):
             a.setEnabled(has)
-        sel = self._selected() is not None
-        for b in (self.keep_btn, self.blur_btn, self.start_btn, self.end_btn, self.del_btn, self.jump_btn):
-            b.setEnabled(sel)
+        self.detect_btn.setEnabled(has)
+        self.export_btn.setEnabled(has)
+        t = self._selected()
+        self.keep_btn.setEnabled(t is not None)
+        self.keep_btn.blockSignals(True)
+        self.keep_btn.setChecked(bool(t and not t.redact))
+        self.keep_btn.blockSignals(False)
         self.play_btn.setEnabled(has)
 
     # -- opening ---------------------------------------------------------------------
@@ -683,6 +689,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_panel(self):
         p = self.project
+        self.selection_label.show()
         kept = sum(1 for t in p.tracks if not t.redact)
         status = "" if p.analysed else "\n(face detection not run yet)"
         self.count_label.setText(f"{len(p.tracks)} boxes: {len(p.tracks) - kept} redacted, "
