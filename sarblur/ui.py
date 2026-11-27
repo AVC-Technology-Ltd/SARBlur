@@ -614,8 +614,8 @@ class MainWindow(QMainWindow):
         self.timeline.invalidate()
         self.seek(0)
         self._update_enabled()
-        if not project.analysed and ask_resume:
-            QTimer.singleShot(0, self.analyse_dialog)
+        if not project.analysed:
+            self.statusBar().showMessage("Video opened. Click '2. Detect faces' when you're ready.")
 
     # -- frames ----------------------------------------------------------------------
     def seek(self, frame: int):
