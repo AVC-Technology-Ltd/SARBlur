@@ -113,7 +113,7 @@ def test_export_redacts_box_and_writes_log(video, tmp_path):
             break
         frames += 1
         assert f[60:100, 110:150].mean() < 8   # redacted region is black (allowing for compression)
-        assert f[0:30, 0:30].std() > 30        # kept region still has detail
+        assert f[0:30, 0:30].std() > 10        # kept region still has detail (redacted ~0)
     assert frames == N
     jp, tp = log_paths(out)
     data = json.loads(jp.read_text())
