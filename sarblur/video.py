@@ -106,7 +106,7 @@ def h264_available(exe: str) -> bool:
                 frames = np.zeros((240, 320, 3), np.uint8).tobytes() * 3
                 r = subprocess.run([exe, "-y", "-hide_banner", "-loglevel", "error",
                                     "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", "320x240", "-r", "25",
-                                    "-i", "-", "-c:v", "h264_mf", "-pix_fmt", "nv12", tmp],
+                                    "-i", "pipe:0", "-c:v", "h264_mf", "-pix_fmt", "nv12", tmp],
                                    input=frames, capture_output=True, timeout=30, creationflags=_NO_WINDOW)
                 ok = r.returncode == 0 and os.path.getsize(tmp) > 0
             except Exception:
@@ -145,7 +145,7 @@ class VideoWriter:
                 self.encoder = "FFmpeg MPEG-4 Part 2 (q 3)"
             cmd = [exe, "-y", "-hide_banner", "-loglevel", "error",
                    "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{width}x{height}", "-r", f"{fps:.6g}",
-                   "-i", "-", "-an",
+                   "-i", "pipe:0", "-an",
                    "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
                    *codec,
                    "-movflags", "+faststart", "-map_metadata", "-1",

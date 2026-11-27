@@ -52,7 +52,7 @@ jobs:
             --enable-mediafoundation --enable-d3d11va
             --enable-encoder=h264_mf,mpeg4
             --enable-decoder=rawvideo --enable-demuxer=rawvideo --enable-parser=h264
-            --enable-muxer=mp4 --enable-protocol=file,pipe
+            --enable-muxer=mp4 --enable-protocol=file,pipe,fd
             --enable-filter=pad,scale,format,null,buffer,buffersink"
           ./configure $CONFIG
           make -j"$(nproc)"
